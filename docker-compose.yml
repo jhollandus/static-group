@@ -1,0 +1,99 @@
+---
+version: '2'
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:5.3.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  broker:
+    image: confluentinc/cp-enterprise-kafka:5.3.0
+    hostname: broker
+    container_name: broker
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:9092
+      CONFLUENT_METRICS_REPORTER_ZOOKEEPER_CONNECT: zookeeper:2181
+      CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      CONFLUENT_METRICS_ENABLE: 'true'
+      CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:5.2.2
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      - zookeeper
+      - broker
+    ports:
+      - "9021:9021"
+    volumes:
+      - interceptors:/usr/share/java/monitoring-interceptors:ro
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'broker:9092'
+      CONTROL_CENTER_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      PORT: 9021
+
+  #scale this up to mimic more load, a single instance puts one tenth of the relevant load on for 15 minutes
+  kafka-load:
+    image: confluentinc/cp-kafka:5.3.0
+    depends_on:
+      - kafka-setup
+    volumes:
+      - ./config:/config
+      - interceptors:/interceptors/
+    environment:
+      CLASSPATH: '/interceptors/monitoring-interceptors-5.3.0.jar'
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+                       cub kafka-ready -b broker:9092 1 20 && \
+                       while ! kafka-topics --zookeeper zookeeper:2181 --describe --topic location; do sleep 5; done && \
+                       kafka-producer-perf-test --producer.config /config/kafka-load.properties --topic location --num-records 3375000 --throughput 3750 --record-size 100'"
+
+  #consumer will consume until 2 minutes transpires without data
+  kafka-consumer:
+    image: confluentinc/cp-kafka:5.3.0
+    depends_on:
+      - kafka-setup
+    volumes:
+      - ./config:/config
+      - interceptors:/interceptors/
+    environment:
+      CLASSPATH: '/interceptors/monitoring-interceptors-5.3.0.jar'
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+                       cub kafka-ready -b broker:9092 1 20 && \
+                       while ! kafka-topics --zookeeper zookeeper:2181 --describe --topic location &> /dev/null; do sleep 5; done && \
+                       kafka-consumer-perf-test --consumer.config /config/kafka-consumer.properties --topic location --group locations-consumer --broker-list broker:9092 --show-detailed-stats --messages 2147483647 --timeout 120000'"
+
+  kafka-setup:
+    image: confluentinc/cp-kafka:5.3.0
+    hostname: kafka-setup
+    container_name: kafka-setup
+    depends_on:
+      - broker
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+                       cub kafka-ready -b broker:9092 1 20 && \
+                       kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --partitions 128 --replication-factor 1 --topic location --config retention.ms=300000'"
+    
+volumes:
+  interceptors: {}
