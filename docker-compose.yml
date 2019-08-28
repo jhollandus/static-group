@@ -67,8 +67,11 @@ services:
       CLASSPATH: '/interceptors/monitoring-interceptors-5.3.0.jar'
     command: "bash -c 'echo Waiting for Kafka to be ready... && \
                        cub kafka-ready -b broker:9092 1 20 && \
-                       while ! kafka-topics --zookeeper zookeeper:2181 --describe --topic location; do sleep 5; done && \
-                       kafka-producer-perf-test --producer.config /config/kafka-load.properties --topic location --num-records 3375000 --throughput 3750 --record-size 100'"
+                       /config/wait-for-topic.sh zookeeper:2181 location && \
+                       /config/perf-producer.sh --topic location \
+                                                --num-records 3375000 \
+                                                --throughput 3750 \
+                                                --record-size 100'"
 
   #consumer will consume until 2 minutes transpires without data
   kafka-consumer:
@@ -82,8 +85,13 @@ services:
       CLASSPATH: '/interceptors/monitoring-interceptors-5.3.0.jar'
     command: "bash -c 'echo Waiting for Kafka to be ready... && \
                        cub kafka-ready -b broker:9092 1 20 && \
-                       while ! kafka-topics --zookeeper zookeeper:2181 --describe --topic location &> /dev/null; do sleep 5; done && \
-                       kafka-consumer-perf-test --consumer.config /config/kafka-consumer.properties --topic location --group locations-consumer --broker-list broker:9092 --show-detailed-stats --messages 2147483647 --timeout 120000'"
+                       /config/wait-for-topic.sh zookeeper:2181 location && \
+                       /config/perf-consumer.sh --topic location \
+                                                --group locations-consumer \
+                                                --broker-list broker:9092 \
+                                                --show-detailed-stats \
+                                                --messages 2147483647 \
+                                                --timeout 120000'"
 
   kafka-setup:
     image: confluentinc/cp-kafka:5.3.0
