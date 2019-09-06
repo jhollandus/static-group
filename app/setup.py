@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 from setuptools import setup, find_packages
 
+requirements = ["confluent-kafka>=1.0.1", "kazoo>=2.6.1"]
+
+with open('./test-requirements.txt') as test_reqs:
+    test_requirements = [line for line in test_reqs]
+
 setup(
-    name='consumer-app',
+    name='static_assignment',
     version='0.0.1',
-    description='Surrogate consumer using leader-app semantics',
-    packages=find_packages(exclude=('tests', 'docs'))
+    description='Use static assignments with your kafka consumer group',
+    packages=find_packages(exclude=('test')),
+    include_package_data=True,
+    install_requires=requirements,
+    tests_require=test_requirements,
 )

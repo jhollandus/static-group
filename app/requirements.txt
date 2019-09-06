@@ -1,2 +1,2 @@
-confluent-kafka===1.0.1
-kazoo===2.6.1
+confluent-kafka==1.0.1
+kazoo==2.6.1
