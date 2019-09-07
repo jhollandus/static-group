@@ -25,9 +25,9 @@ tp2 = {'locations': 12, 'users': 4}
 tp3 = {'locations': 12, 'users': 4, 'drivers': 3}
 
 
-@pytest.mark.parametrize('groupSize,partitions', [(0, 12), (0, 0)])
-def test_assignment_calculator_zero_group_size(groupSize, partitions):
-    calc = AssignmentCalculator(groupSize, {'locations': partitions})
+@pytest.mark.parametrize('size,partitions', [(0, 12), (0, 0)])
+def test_assignment_calculator_zero_group_size(size, partitions):
+    calc = AssignmentCalculator(size, {'locations': partitions})
     mbrs = calc.generateAssignments()
     assert len(mbrs) == 0
 
@@ -75,12 +75,10 @@ def test_assignment_calculator_distribution(groupSize, topicPartitions):
     # verify even distribution
     assert abs(maxCount - minCount) < 2
 
-    totalPartCount = 0
-    for t, p in topicPartitions.items():
-        totalPartCount += p
+    totalPartCount = sum(topicPartitions.values())
 
     # verify each assignment is used just once
-    assert len(found) == totalPartCount
+    assert sum(found.values()) == totalPartCount
 
 
 def test_assignment_json_serde():

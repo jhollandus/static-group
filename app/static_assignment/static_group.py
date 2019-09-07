@@ -24,9 +24,9 @@ class MemberAssignment:
 
         return None
 
-    def __init__(self, memberId: MemberId, topics: TopicAssignment = {}):
+    def __init__(self, memberId: MemberId, topics: Optional[TopicAssignment] = None):
         self.memberId = memberId
-        self.topics = topics
+        self.topics: TopicAssignment = topics if topics is not None else dict()
 
     def __str__(self):
         return f'memberId: {self.memberId}, topics: {self.topics}'
