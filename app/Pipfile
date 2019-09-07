@@ -10,10 +10,13 @@ pytest = "==5.0.1"
 pytest-cov = "==2.7.1"
 pytest-mock = "==1.10.4"
 black = "*"
+pre-commit = "*"
 
 [packages]
 confluent-kafka = "==1.0.1"
 kazoo = "==2.6.1"
+ujson = "*"
+gevent = "*"
 
 [pipenv]
 allow_prereleases = true

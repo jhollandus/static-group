@@ -1,29 +1,146 @@
-import argparse
-import os
 import logging
-import time
-import sys
-from typing import Tuple, Dict, List
+from time import time
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+
+import ujson
 
 logging.basicConfig()
 logger = logging.getLogger('static_group')
 
-TopicAssignment = Dict[str][List[int]]
-Topics = Dict[str][int]
+TopicAssignment = Dict[str, List[int]]
+Topics = Dict[str, int]
+MemberId = int
 
-class Assignments:
-    def __init__(self):
-        # all distributed topics and partition counts
-        self.topics = {}
-        self.maxMembers = 0
-        self.version = 0
-        self.configVersion = ""
 
-        # member id to assignments
-        self.memberAssignments = []
+class MemberAssignment:
+    @staticmethod
+    def fromPrimitive(pRep):
+        if 'memberId' in pRep and 'topics' in pRep and isinstance(pRep['topics'], Dict):
+
+            return MemberAssignment(int(pRep['memberId']), pRep['topics'])
+
+        return None
+
+    def __init__(self, memberId: MemberId, topics: TopicAssignment = {}):
+        self.memberId = memberId
+        self.topics = topics
 
     def __str__(self):
-        return f"{self.memberAssignments}"
+        return f'memberId: {self.memberId}, topics: {self.topics}'
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __iter__(self):
+        index = sorted(self.topics.keys())
+        for t in index:
+            pIndex = sorted(self.topics[t])
+            for p in pIndex:
+                yield (t, p)
+
+    def _primitive(self):
+        return {'memberId': self.memberId, 'topics': self.topics}
+
+    def totalAssignments(self):
+        acc = 0
+        for t, p in self.topics.items():
+            acc += len(p)
+        return acc
+
+    def assign(self, topic: str, partition: int):
+        """
+        Assign the given topic and partition number to this member.
+
+        Args:
+            topic (str): Name of the topic to be assigned
+            partition (int): The topic partition number to be assigned
+        """
+        if topic not in self.topics:
+            self.topics[topic] = []
+
+        self.topics[topic].append(partition)
+
+
+class AssignmentVersion:
+    """
+    Indicates the version of the assignments associated to a static membership
+    group.
+
+    Attributes
+        version (int): The version of the assignment, this is a monotonically incremementing integer that changes whenever the Assignments change.
+        configVersion (int): This version prevents older process configurations from reverting newer ones. It should always increase over time.
+        group (str): The name of the consumer group, allows assignments to be isolated based on group.
+    """
+
+    def __init__(self, version: int, configVersion: int, group: str):
+        self.version = version
+        self.configVersion = configVersion
+        self.group = group
+
+
+class Assignments:
+    @staticmethod
+    def fromJson(jsonData: str) -> Optional['Assignments']:
+        """
+        Deserializes JSON as produced by the asJson() method into an Assignments object.
+
+        Args:
+            jsonData (str): The serialized Assignments JSON
+
+        return (Assignment): The deserialized Assignment or None if the jsonData is invalid
+        """
+        assignments = None
+        try:
+            parsed = ujson.loads(jsonData)
+            topics = parsed['topics']
+            maxMembers = int(parsed['maxMembers'])
+            group = parsed['group']
+            configVersion = int(parsed['configVersion'])
+            version = int(parsed['version'])
+            primitiveMemberAssignments = parsed['memberAssignments']
+
+            memberAssignments = [
+                ma
+                for ma in [MemberAssignment.fromPrimitive(pma) for pma in primitiveMemberAssignments]
+                if ma is not None
+            ]
+
+            if isinstance(topics, Dict):
+                assignments = Assignments(
+                    group, maxMembers, topics, configVersion, version, memberAssignments, len(memberAssignments) < 1
+                )
+        except Exception:
+            logger.exception("Failed to parse Assignments from JSON. json: '%s'", jsonData)
+
+        return assignments
+
+    def __init__(
+        self,
+        group: str = 'NO_GROUP',
+        maxMembers: int = 0,
+        topics: Topics = {},
+        configVersion: int = 0,
+        version: int = 0,
+        memberAssignments: List[MemberAssignment] = [],
+        doReassign: bool = True,
+    ):
+        # all distributed topics and partition counts
+        self.group = group
+        self.topics = topics
+        self.maxMembers = maxMembers
+        self.version = version
+        self.configVersion = configVersion
+
+        # member id to assignments
+        self.memberAssignments = memberAssignments
+        if doReassign:
+            self._reassign()
+
+    def __str__(self):
+        return f'{self.memberAssignments}'
 
     def __repr__(self):
         return self.__str__()
@@ -32,20 +149,45 @@ class Assignments:
         calculator = AssignmentCalculator(self.maxMembers, self.topics)
         self.memberAssignments = calculator.generateAssignments(self)
 
+    def asJson(self) -> str:
+        """
+        Serializes this object into JSON suitable for deserialization using
+        the static method fromJson().
+
+        returns (str): The JSON
+        """
+        j: Dict[str, Any] = {}
+        j['group'] = self.group
+        j['topics'] = self.topics
+        j['maxMembers'] = self.maxMembers
+        j['version'] = self.version
+        j['configVersion'] = self.configVersion
+        j['memberAssignments'] = [ma._primitive() for ma in self.memberAssignments]
+
+        return ujson.dumps(j)
+
+    def assignmentVersion(self) -> AssignmentVersion:
+        return AssignmentVersion(self.version, self.configVersion, self.group)
+
     def changeMaxMembers(self, maxMembers: int) -> bool:
         """
         Updates the maximum number of members that may belong to this group. If this
         update causes a change to the assignments then True will be returned.
 
         Args:
-            maxMembers (int): The new maximum group size
+            maxMembers (int): The new maximum group size, must be greater than 0
 
         returns (bool): True if the change triggered a redistribution of assignments
         """
         return self._changeMaxMembers(maxMembers)
 
-    def _changeMaxMembers(self, maxMembers: int, doReassign: bool=True) -> bool:
-        changed =  len(self.members) != maxMembers
+    def _changeMaxMembers(self, maxMembers: int, doReassign: bool = True) -> bool:
+        if not maxMembers > 0:
+            raise ValueError(
+                f"Invalid maxMembers argument, expected to be greater than 0, but received: '{maxMembers}''"
+            )
+
+        changed = self.maxMembers != maxMembers
         if changed:
             self.maxMembers = maxMembers
 
@@ -65,7 +207,7 @@ class Assignments:
         """
         return self._changeTopicPartitions(topics)
 
-    def _changeTopicPartitions(self, topics: Topics, doReassign: bool=True):
+    def _changeTopicPartitions(self, topics: Topics, doReassign: bool = True):
         changed = False
         for t, p in topics.items():
             if t not in self.topics or self.topics[t] != p:
@@ -77,28 +219,10 @@ class Assignments:
 
             if doReassign:
                 self._reassign()
-        
-        return changed
-
-    def reset(self, maxMembers: int, topics: Topics):
-        """
-        Combines changes to all characteristics of this assignment as a convenience. If these updates
-        cause a redistribution of assignments then True will be returned.
-
-        Args:
-            maxMembers (int): The new maximum group size
-            topics (Topics): An updated list of topics to assign
-
-        Returns (bool): True if assignment changes occurred
-        """
-        changed = self._changeMaxMembers(maxMembers, doReassign=False) or self._changeTopicPartitions(topics, doReassign=False)
-
-        if changed:
-            self._reassign()
 
         return changed
 
-    def getMemberAssignment(self, memberId: int):
+    def getMemberAssignment(self, memberId: MemberId):
         """
         Fetches the assignments for the given member ID.
 
@@ -107,7 +231,10 @@ class Assignments:
 
         Returns (MemberAssignment): The assignments for the member ID or None if the member ID is unknown or unassigned
         """
-        return self.memberAssignments.get(memberId)
+        if len(self.memberAssignments) > memberId:
+            return self.memberAssignments[memberId]
+        else:
+            return None
 
 
 class AssignmentCalculator:
@@ -115,7 +242,7 @@ class AssignmentCalculator:
     Calculate group assigments based on the given criteria.
 
     Args:
-        maxSize (int): The maximum number of assignments to calculate 
+        maxSize (int): The maximum number of assignments to calculate
         topics (Topics): A dictionary of topic names to partition counts that need assigning
     """
 
@@ -132,7 +259,7 @@ class AssignmentCalculator:
 
         topics = {}
         for t, p in self.topics.items():
-            topics[t] =  {"count": p, "pos": 0}
+            topics[t] = {'count': p, 'pos': 0}
 
         sortedTopics = sorted(topics.keys())
 
@@ -151,7 +278,7 @@ class AssignmentCalculator:
             acc += p
         return acc
 
-    def generateAssignments(self, prevAssignments: Assignments=None):
+    def generateAssignments(self, prevAssignments: Assignments = None):
         """
         Generates a new list of assignments for all members based on the state of the calculator. Can take into
         consideration the max group size, topics to distribute and previous assignments.
@@ -169,13 +296,14 @@ class AssignmentCalculator:
         tpIter = self._partitionsByIndex()
         members = [MemberAssignment(i) for i in range(self.maxSize)]
 
-        perMbrPartitions = int(tpSize / self.maxSize)
-        if perMbrPartitions < 1:
+        if self.maxSize >= tpSize:
             perMbrPartitions = 1
+            remainders = 0
+        else:
+            perMbrPartitions = int(tpSize / self.maxSize)
+            remainders = tpSize % self.maxSize
 
-        remainders = tpSize % self.maxSize
-
-        logger.info(f"perMbrCount: {perMbrPartitions}, remainders: {remainders}")
+        logger.info('perMbrCount: %s, remainders: %s', perMbrPartitions, remainders)
         for mbr in members:
             pCount = perMbrPartitions
             if remainders > 0:
@@ -183,7 +311,7 @@ class AssignmentCalculator:
                 remainders -= 1
 
             assignCount = 0
-            for t,p in tpIter:
+            for t, p in tpIter:
                 mbr.assign(t, p)
                 assignCount += 1
                 if assignCount >= pCount:
@@ -191,62 +319,8 @@ class AssignmentCalculator:
 
         return members
 
-class MemberAssignment:
-    def __init__(self, memberId: int):
-        self.memberId = memberId
-        self.topics = {}
 
-    def __str__(self):
-        return f"memberId: {self.memberId}, topics: {self.topics}"
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __iter__(self):
-        index = sorted(self.topics.keys())
-        for t in index:
-            pIndex = sorted(self.topics[t])
-            for p in pIndex:
-                yield (t, p)
-
-    def totalAssignments(self):
-        acc = 0
-        for t, p in self.topics.items():
-            acc += len(p)
-        return acc
-
-    def assign(self, topic: str, partition: int):
-        """
-        Assign the given topic and partition number to this member.
-
-        Args:
-            topic (str): Name of the topic to be assigned
-            partition (int): The topic partition number to be assigned
-        """
-        if not topic in self.topics:
-            self.topics[topic] = []
-
-        self.topics[topic].add(partition)
-
-    def popAssignment(self):
-        """
-        Remove the last partition assignment as is determined by standard sorting.
-
-        returns: (topic, partition) tuple
-        """
-        topic, part = None
-        for t, p in self:
-            topic = t
-            part = p
-
-        self.removeAssignment(topic, part)
-        return (topic, part)
-
-    def clearAssignments(self):
-        self.topics = {}
-
-
-class StaticConsumer(object):
+class StaticConsumer:
     """StaticMembership consumer interface.
 
     Implement this class and all methods that are not prefixed with 'on' (those methods are optional)
@@ -318,22 +392,35 @@ class StaticConsumer(object):
         pass
 
 
-class StaticConfig(object):
+class StaticConfig:
     """Configuration for static membership.
 
     Attributes:
         hostId=None (str): A unique identifier for the host instance of this process
         topics=None (List[str]): The target topics for the consumers to consume from
+        group=None (str): A name for the consumer group that can be used to isolate assignments
         maxGroupSize=None (int): The maximum membership count expected for the static group
         configVersion=None (int): The version of the configuration, used to prevent reverting of assignments
         maxPollInterval=5000 (int): The maximum number of milliseconds between heartbeats before a member is considered unhealthy
         zkConnect=None (str): A standard connection string for zookeeper, host:port,host2:port,host3:port
         kafkaConnect=None (str): Standard kafka bootstrap servers string, [proto://]host:port,[proto://]host2:port,[proto://]host3:port
     """
-    def __init__(self, hostId=None, topics: List[str] = None, maxGroupSize=None, configVersion=None, maxPollInterval=5000, zkConnect=None, kafkaConnect=None):
+
+    def __init__(
+        self,
+        hostId=None,
+        topics: List[str] = None,
+        group: str = None,
+        maxGroupSize=None,
+        configVersion=None,
+        maxPollInterval=5000,
+        zkConnect=None,
+        kafkaConnect=None,
+    ):
 
         self.hostId = hostId
         self.topics = topics
+        self.group = group
         self.maxGroupSize = maxGroupSize
         self.configVersion = configVersion
         self.maxPollInterval = maxPollInterval
@@ -341,18 +428,29 @@ class StaticConfig(object):
         self.kafkaConnect = kafkaConnect
 
 
-class StaticCoordinator(object):
+class StaticMemberMeta:
+    """
+    Information about a static member that is used for coordination.
+    """
+
+    def __init__(self, hostId: str, memberId: MemberId = None, assignmentVersion: AssignmentVersion = None):
+        self.hostId = hostId
+        self.memberId = memberId
+        self.assignmentVersion = assignmentVersion
+
+
+class StaticCoordinator:
     def __init__(self, cfg: StaticConfig):
         self.cfg = cfg
 
-    def updateAssignments(self, memberId: int, newAssignments: Assignments):
+    def updateAssignments(self, meta: StaticMemberMeta, newAssignments: Assignments):
         """
-        Update the current assignments with the new assignment. 
+        Update the current assignments with the new assignment.
         An error should be raised if the update did not succeed.
         """
         raise NotImplementedError
 
-    def leave(self, memberId: int, assignments: Assignments = None):
+    def leave(self, meta: StaticMemberMeta):
         """
         Leave the group and give up the current memberId and assignments.
 
@@ -361,17 +459,17 @@ class StaticCoordinator(object):
         """
         raise NotImplementedError
 
-    def join(self, memberId: int = None, assignments: Assignments = None) -> int:
+    def join(self, meta: StaticMemberMeta) -> int:
         """
-        Join the consumer group. If memberId is specified then an attempt will be made to acquire that 
+        Join the consumer group. If memberId is specified then an attempt will be made to acquire that
         ID otherwise the next available one will be taken.
 
-        This method should be idempotent meaning that if the given member ID is already assigned to it then nothing 
+        This method should be idempotent meaning that if the given member ID is already assigned to it then nothing
         should change and no internal join activity should occur.
         """
         raise NotImplementedError
 
-    def assignments(self, memberId: int) -> Assignments:
+    def assignments(self, meta: StaticMemberMeta) -> Assignments:
         """
         Fetches the most current version of the assignments. In the case where the most current
         version is not accessible then None should be returned.
@@ -380,9 +478,11 @@ class StaticCoordinator(object):
         """
         raise NotImplementedError
 
-    def heartbeat(self, memberId: int, assignments: Assignments):
+    def heartbeat(self, meta: StaticMemberMeta) -> int:
         """
-        A heartbeat must be performed as part of the membership contract. 
+        A heartbeat must be performed as part of the membership contract.
+
+        return (int): The memberId currently assigned to the member
         """
         raise NotImplementedError
 
@@ -399,71 +499,73 @@ class StaticCoordinator(object):
     def stop(self):
         """
         Stop this coordinator and have it cleanup any related resource allocations.
-        Calling this on an already stopped or unstarted coordinator should not throw an 
+        Calling this on an already stopped or unstarted coordinator should not throw an
         exception.
         """
         raise NotImplementedError
 
 
-class StaticMembership(object):
+class StaticMembership:
     """
     Represents membership to a statically assigned kafka consumer group.
     Designed as a simple state machine a client using this interface must
     adhere to the following contract:
 
     1. new members must first perform a 'Join'
-    2. Once an assignment is given the consumer must begin consuming 
+    2. Once an assignment is given the consumer must begin consuming
        from the assigned topic partitions
     3. Once consuming begins the consumer must, as part of their poll loop,
-       call `heartbeat()`, if they fail to call heartbeat then they will 
+       call `heartbeat()`, if they fail to call heartbeat then they will
        eventually be unassigned
     4. Whenever a new assignment is given the consumer must update accordingly
     5. When a consumer is going to gracefully leave they should stop consuming
        and then call `leave()`
-    
+
     State diagram below:
 
     new -> [start()] -> [coord.join()] -> joined -> [coord.heartbeat()] -> joined
     [coord.assignmentReceived] -> [consumer.assign()]
 
-    assigned -> [consumer.poll()] -> [coord.heartbeat()] -> [coord.assignment()] -> [consumer.poll()] 
+    assigned -> [consumer.poll()] -> [coord.heartbeat()] -> [coord.assignment()] -> [consumer.poll()]
                                           -> [leave()] -> [consumer.onLeave()] -> new
                               -> [stop()] -> [consumer.onLeave()] -> new
 
-    Calling a method when not in the correct state will elicit an error, e.g. calling 
+    Calling a method when not in the correct state will elicit an error, e.g. calling
     `leave()` when in the 'new' state.
     """
 
-    def __init__(
-        self,
-        config: StaticConfig,
-        staticConsumer: StaticConsumer,
-        coordinator: StaticCoordinator,
-    ):
+    def __init__(self, config: StaticConfig, staticConsumer: StaticConsumer, coordinator: StaticCoordinator):
 
-        self.STATE_STOPPED = "stopped"
-        self.STATE_STOPPING = "stopping"
-        self.STATE_NEW = "new"
-        self.STATE_JOINED = "joined"
-        self.STATE_LEFT = "left"
-        self.STATE_ASSIGNED = "assigned"
-        self.STATE_CONSUMING = "consuming"
+        self.STATE_STOPPED = 'stopped'
+        self.STATE_STOPPING = 'stopping'
+        self.STATE_NEW = 'new'
+        self.STATE_JOINED = 'joined'
+        self.STATE_LEFT = 'left'
+        self.STATE_ASSIGNED = 'assigned'
+        self.STATE_CONSUMING = 'consuming'
 
         self._errorCount = 0
         self._state = self.STATE_NEW
-        self._assignment = None
-        self._memberId = None
+        self._assignments: Optional[Assignments] = None
+        self._memberId: Optional[MemberId] = None
+        self._memberAssignment: Optional[MemberAssignment] = None
         self._conf = config
         self._cons = staticConsumer
         self._coord = coordinator
 
+    def _meta(self):
+        aVersion = None
+        if self._assignments is not None:
+            aVersion = self._assignments.assignmentVersion()
+
+        return StaticMemberMeta(self._hostId, self._memberId, aVersion)
 
     def _fetchAllTopicMetadata(self, topicList: List[str]) -> Topics:
-        topics = Topics()
+        topics = dict()
         for t in topicList:
             pCount = self._cons.topicPartitionCount(t)
             if pCount == 0:
-                logger.warn(f"Invalid topic '{t}' encountered during metadata fetch")
+                logger.warning("Invalid topic '%s' encountered during metadata fetch", t)
             else:
                 topics[t] = pCount
         return topics
@@ -471,9 +573,7 @@ class StaticMembership(object):
     def _updateAssignments(self):
         topics = self._fetchAllTopicMetadata(self._conf.topics)
 
-        assignments = self._coord.assignments(
-            self._conf, self._memberId, self._assignment
-        )
+        assignments = self._coord.assignments(self._conf, self._memberId, self._assignments)
 
         changed = assignments.changeTopicPartitions(topics)
 
@@ -484,11 +584,8 @@ class StaticMembership(object):
 
         if changed:
             assignments.version += 1
-            self._coord.updateAssignments(
-                self._conf,
-                self._memberId,
-                assignments)
-        
+            self._coord.updateAssignments(self._meta(), assignments)
+
         return assignments
 
     def _isAssignmentChange(self, newAssignments: Assignments):
@@ -505,24 +602,33 @@ class StaticMembership(object):
 
         Args:
             verifiedMemberId (int): The verfied member ID as returned from the coordinator
-        
+
         returns (bool): True if the current member ID matches the verified one
         """
-        return (verifiedMemberId is not None and 
-                verifiedMemberId == self._memberId)
+        return verifiedMemberId is not None and verifiedMemberId == self._memberId
 
     def _doReassignment(self, newAssignments: Assignments) -> bool:
         self._assignments = newAssignments
-        memberAssignments = self._assignments.getMember(self._memberId)
+
+        if self._memberId is None:
+            memberAssignments = None
+        else:
+            memberAssignments = self._assignments.getMemberAssignment(self._memberId)
+
         if memberAssignments is not None:
             try:
                 self._cons.assign(memberAssignments)
-            except:
-                logger.exception(f"Failed to perform reassignment. assignments: {memberAssignments}")
+                self._memberAssignment = memberAssignments
+            except Exception:
+                logger.exception('Failed to perform reassignment. assignments: %s', memberAssignments)
                 return False
         else:
-            logger.warn(f"Current member ID ({self._memberId}) not found in new assignments. {newAssignments}") 
-            return False 
+            logger.warning(
+                'Current member ID not found in new assignments. memberId: %s, assignments: %s',
+                self._memberId,
+                newAssignments,
+            )
+            return False
 
         return True
 
@@ -533,18 +639,19 @@ class StaticMembership(object):
         returns (bool): True when the leave command has been successful
         """
         try:
-            self._coord.leave(self._memberId, self._assignment)
+            self._coord.leave(self._meta())
             self._memberId = None
-            self._assignment = None
-        except:
-            logger.exception("Failed to leave the group.")
+            self._memberAssignment = None
+            self._assignments = None
+        except Exception:
+            logger.exception('Failed to leave the group.')
             return False
 
         try:
             self._cons.onLeave()
-        except:
-            logger.exception("consumer.onLeave() failed, ignoring.")
-        
+        except Exception:
+            logger.exception('consumer.onLeave() failed, ignoring.')
+
         return True
 
     def _doStop(self) -> bool:
@@ -557,17 +664,21 @@ class StaticMembership(object):
         fail = False
         try:
             self._cons.close()
-        except:
-            logger.exception("Failed to close consumer.")
+        except Exception:
+            logger.exception('Failed to close consumer.')
             fail = True
 
         try:
             self._coord.stop()
-        except:
-            logger.exception("Failed to close coordinator.")
+        except Exception:
+            logger.exception('Failed to close coordinator.')
             fail = True
 
         return not fail
+
+    def _transitionState(self, newState: str):
+        logger.debug('State transition. prevState: %s, nextState: %s', self._state, newState)
+        self._state = newState
 
     def start(self):
 
@@ -587,7 +698,7 @@ class StaticMembership(object):
         #   joined -> new
         #   assigned -> new
         #   consuming -> new
-        # 
+        #
         # on unrecoverable error
         #   fail fast, exit process
         #
@@ -596,62 +707,63 @@ class StaticMembership(object):
         #   fail after certain threshhold, exit process
         while self._state != self.STATE_STOPPED:
 
+            # send heartbeat
+            memberId = self._coord.heartbeat(self._meta())
+
             if self._state == self.STATE_LEFT:
-                #this might fail but we're ready to exit the process anyways
+                # this might fail but we're ready to exit the process anyways
                 self._doStop()
-                self._state = self.STATE_STOPPED
+                self._transitionState(self.STATE_STOPPED)
 
             elif self._state == self.STATE_STOPPING:
                 if self._doLeave():
-                    self._state = self.STATE_LEFT
+                    self._transitionState(self.STATE_LEFT)
 
             else:
                 # new, joined, assigned, consuming states only
-                # the join call is idempotent and can be used to confirm we still are assigned the same ID
-                memberId = self._coord.join(
-                    self._conf, self._memberId, self._assignment
-                )
-
                 if self._state == self.STATE_NEW:
+                    memberId = self._coord.join(self._conf, self._memberId, self._assignments)
+
                     if memberId is not None:
                         self._memberId = memberId
-                        self._state = self.STATE_JOINED
+                        self._transitionState(self.STATE_JOINED)
                         self._cons.onJoin()
 
-                else: 
+                else:
                     # joined, assigned, consuming states only
                     # handle id loss or change
                     if not self._isMemberIdValid(memberId):
-                        logger.warn(f"Member ID is invalid! It has unexpectedly changed from {self._memberId} to {memberId}.")
-                        self._state = self.STATE_NEW
+                        logger.warning(
+                            f'Member ID is invalid! It has unexpectedly changed from {self._memberId} to {memberId}.'
+                        )
+                        self._transitionState(self.STATE_NEW)
                     else:
 
                         # check for updated assignments or get our initial assignment if just JOINED
-                        newAssignments = self._coord.assignments(
-                            self._conf, self._memberId, self._assignment
-                        )
+                        newAssignments = self._coord.assignments(self._meta())
 
                         if self._isAssignmentChange(newAssignments):
                             success = self._doReassignment(newAssignments)
 
                             if success:
-                                self._state = self.STATE_ASSIGNED
+                                self._transitionState(self.STATE_ASSIGNED)
                             else:
-                                self._state = self.STATE_NEW
-                                
+                                self._transitionState(self.STATE_NEW)
+
                         elif self._state == self.STATE_ASSIGNED:
-                            self._state = self.STATE_CONSUMING
-                
+                            self._transitionState(self.STATE_CONSUMING)
+
                         if self._state == self.STATE_CONSUMING:
                             self._cons.poll()
 
-            # send heartbeat
-            self._coord.heartbeat(self._conf, self._memberId, self._assignments)
-
     def stop(self):
-        self._state = self.STATE_STOPPING
+        logger.info(
+            'Stopping consumer membership. memberId: %s, assignment: %d', self._memberId, self._memberAssignment
+        )
+        self._transitionState(self.STATE_STOPPING)
         while self._state != self.STATE_STOPPED:
             time.sleep(1)
+        logger.info('Completed stop')
 
     def state(self):
         return self._state

@@ -1,0 +1,58 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v2.2.3
+    hooks:
+    -   id: check-added-large-files
+        args: ['--maxkb=7900']
+    -   id: check-docstring-first
+    -   id: check-executables-have-shebangs
+    -   id: check-json
+    -   id: check-merge-conflict
+    -   id: check-vcs-permalinks
+    -   id: check-yaml
+    -   id: debug-statements
+    -   id: double-quote-string-fixer
+    -   id: end-of-file-fixer
+    -   id: pretty-format-json
+        args: ['--autofix']
+    -   id: trailing-whitespace
+-   repo: https://gitlab.com/pycqa/flake8
+    rev: 3.7.7
+    hooks:
+    -   id: flake8
+        additional_dependencies:
+        -   flake8-tidy-imports==1.1.0
+-   repo: https://github.com/asottile/reorder_python_imports
+    rev: v1.4.0
+    hooks:
+    -   id: reorder-python-imports
+        args: [--py3-plus]
+-   repo: https://github.com/ambv/black
+    rev: 19.3b0
+    hooks:
+    -   id: black
+        args: [--line-length=120, --skip-string-normalization]
+-   repo: https://github.com/asottile/pyupgrade
+    rev: v1.22.0
+    hooks:
+    -   id: pyupgrade
+        args: [--py36-plus]
+-   repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.4.0
+    hooks:
+    -   id: python-check-blanket-noqa
+    -   id: python-check-mock-methods
+    -   id: python-no-log-warn
+    -   id: python-use-type-annotations
+-   repo: local
+    hooks:
+    -   id: python-check-mypy-format
+        name: Check mypy format
+        description: 'Enforce that mypy `type` annotation is followed by a `:`'
+        entry: '# type(?!:)'
+        language: pygrep
+        types: [python]
+-   repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v0.711
+    hooks:
+    -   id: mypy

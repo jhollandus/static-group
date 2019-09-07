@@ -16,9 +16,9 @@ stats() {
         local startTime=$(date +%s)
         startTime=$((startTime / 60))
         startTime=$((startTime * 60))
-    
+
         local endTime=$((startTime + 60))
- 
+
         curl -q "http://localhost:9021/2.0/monitoring/wNF8qDSRQBiT1A34pAOuOw/consumer_groups?startTimeMs=${startTime}000&stopTimeMs=${endTime}000&rollup=ONE_MINUTE&type=MEMBER&group=locations-consumer&memberClientId=locations-consumer" >> "$out"
 
         iters=$((iters + 1))

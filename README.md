@@ -17,8 +17,3 @@ What the geezer is trying to do is get its group members to spend less
 time in meetings and more time getting stuff done. A side effect of his
 obstinate attitude is that latencies are decreased, throughput is
 increased but time to react to a lost member may be increased.
-
-
-
-
-
