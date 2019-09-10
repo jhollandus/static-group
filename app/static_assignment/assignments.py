@@ -29,11 +29,34 @@ class MemberAssignment:
 
         returns (MemberAssignment): None returned if the input does not conform
         """
-        if 'memberId' in pRep and 'topics' in pRep and isinstance(pRep['topics'], Dict):
 
+        valid = True
+        valid = (
+            pRep is not None
+            and 'memberId' in pRep
+            and 'topics' in pRep
+            and isinstance(pRep['topics'], dict)
+            and isinstance(pRep['memberId'], int)
+        )
+
+        if valid:
+            for t, pList in pRep['topics'].items():
+                if not valid:
+                    break
+
+                if not isinstance(pList, list):
+                    valid = False
+                else:
+                    for p in pList:
+                        if not isinstance(p, int):
+                            valid = False
+                            break
+
+        if valid:
             return MemberAssignment(int(pRep['memberId']), pRep['topics'])
-
-        return None
+        else:
+            logger.warning('Failed to convert primitive member assignment to MemberAssignment. prim: %s', pRep)
+            return None
 
     def __init__(self, memberId: MemberId, topics: Optional[TopicAssignment] = None):
         """Manages the assignments for a specific member of the assignment group.
@@ -202,7 +225,7 @@ class Assignments:
             self._reassign()
 
     def __str__(self):
-        return f'{self.memberAssignments}'
+        return f'{{assignments: {self.memberAssignments}}}'
 
     def __repr__(self):
         return self.__str__()

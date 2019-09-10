@@ -42,6 +42,21 @@ def assignments():
     return Assignments.fromJson(good_assignment_json)
 
 
+@pytest.mark.parametrize(
+    'dictData',
+    [
+        None,
+        {'memberId': 0},
+        {'topics': {'t1': [4]}},
+        {'memberId': 0, 'topics': {'t1': [4, 'foo'], 't2': [0]}},
+        {'memberId': 0, 'topics': {'foo': 0}},
+    ],
+)
+def test_member_assignment_primitive_bad_input(dictData):
+    badPrim = MemberAssignment.fromPrimitive(dictData)
+    assert badPrim is None
+
+
 def test_member_assignment_primitive(mbrAssignment: MemberAssignment):
     prim = mbrAssignment.toPrimitive()
     assert 'memberId' in prim
@@ -53,6 +68,19 @@ def test_member_assignment_primitive(mbrAssignment: MemberAssignment):
     assert fromPrim is not None
     assert fromPrim.memberId == mbrAssignment.memberId
     assert fromPrim.topics == mbrAssignment.topics
+
+
+def test_member_assignment_iter():
+    mba = MemberAssignment(0)
+    mba.assign('t1', 0)
+    mba.assign('t2', 0)
+
+    mba2 = MemberAssignment(0)
+    mba2.assign('t2', 0)
+    mba2.assign('t1', 0)
+
+    for m, m2 in zip(mba, mba2):
+        assert m == m2
 
 
 def test_member_assignment_total_assignments(mbrAssignment: MemberAssignment):
@@ -182,6 +210,13 @@ def test_assignment_change_topics(assignments: Assignments):
 
     changed = assignments.changeTopicPartitions(tp2)
     assert not changed
+
+
+def test_assignment_str(assignments: Assignments):
+    assert 'memberId: 2,' in f'{assignments}'
+
+    asn = Assignments()
+    assert 'assignments:' in f'{[asn]}'
 
 
 def test_assignment_get_member_assignment(assignments: Assignments):
