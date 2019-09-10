@@ -1,7 +1,7 @@
 {
   "_meta": {
     "hash": {
-      "sha256": "f46485afcb26b93056668ea6145c8a3e033dabdf020b4c6e89f1096058aa0c59"
+      "sha256": "60c209ff8941f32bef8269664b0e6f34a2645ae65b45893ed3219a44a3ac30e3"
     },
     "pipfile-spec": 6,
     "requires": {},
@@ -111,6 +111,10 @@
         "sha256:d16a0141ec1a18405cd4ce8b4613101da75da0e9a7aec5bdd4fa804d0e0eba73"
       ],
       "version": "==1.12.0"
+    },
+    "static-assignment": {
+      "editable": true,
+      "path": "."
     },
     "ujson": {
       "hashes": [

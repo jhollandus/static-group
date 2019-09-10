@@ -1,6 +1,7 @@
 import pytest
-from static_assignment.static_group import AssignmentCalculator
-from static_assignment.static_group import Assignments
+from static_assignment.assignments import AssignmentCalculator
+from static_assignment.assignments import Assignments
+from static_assignment.assignments import MemberAssignment
 
 good_assignment_json = '''
     {
@@ -23,6 +24,50 @@ good_assignment_json = '''
 tp1 = {'locations': 12}
 tp2 = {'locations': 12, 'users': 4}
 tp3 = {'locations': 12, 'users': 4, 'drivers': 3}
+
+
+@pytest.fixture()
+def mbrAssignment():
+    mbr = MemberAssignment(1)
+    mbr.assign('t1', 0)
+    mbr.assign('t1', 1)
+    mbr.assign('t2', 0)
+    mbr.assign('t2', 1)
+
+    return mbr
+
+
+@pytest.fixture()
+def assignments():
+    return Assignments.fromJson(good_assignment_json)
+
+
+def test_member_assignment_primitive(mbrAssignment: MemberAssignment):
+    prim = mbrAssignment.toPrimitive()
+    assert 'memberId' in prim
+    assert 'topics' in prim
+    assert prim['memberId'] == mbrAssignment.memberId
+    assert prim['topics'] == mbrAssignment.topics
+
+    fromPrim = MemberAssignment.fromPrimitive(prim)
+    assert fromPrim is not None
+    assert fromPrim.memberId == mbrAssignment.memberId
+    assert fromPrim.topics == mbrAssignment.topics
+
+
+def test_member_assignment_total_assignments(mbrAssignment: MemberAssignment):
+    assert mbrAssignment.totalAssignments() == 4
+
+
+def test_member_assignment_assign(mbrAssignment: MemberAssignment):
+    mbrAssignment.assign('mytopic', 2)
+    assert mbrAssignment.totalAssignments() == 5
+
+    mbrAssignment.assign('mytopic', 2)
+    assert mbrAssignment.totalAssignments() == 5
+
+    mbrAssignment.assign('mytopic', 5)
+    assert mbrAssignment.totalAssignments() == 6
 
 
 @pytest.mark.parametrize('size,partitions', [(0, 12), (0, 0)])
@@ -113,32 +158,41 @@ def test_assignment_json_bad_input(jsonStr):
     assert rs is None
 
 
-def test_assignment_version():
-    asns = Assignments.fromJson(good_assignment_json)
-    av = asns.assignmentVersion()
-    assert av.configVersion == asns.configVersion
-    assert av.group == asns.group
-    assert av.version == asns.version
+def test_assignment_version(assignments: Assignments):
+    av = assignments.assignmentVersion()
+    assert av.configVersion == assignments.configVersion
+    assert av.group == assignments.group
+    assert av.version == assignments.version
 
 
-def test_assignment_change_size():
-    asns = Assignments.fromJson(good_assignment_json)
-
+def test_assignment_change_size(assignments: Assignments):
     with pytest.raises(ValueError):
-        changed = asns.changeMaxMembers(0)
+        changed = assignments.changeMaxMembers(0)
 
-    changed = asns.changeMaxMembers(8)
+    changed = assignments.changeMaxMembers(8)
     assert changed
 
-    changed = asns.changeMaxMembers(8)
+    changed = assignments.changeMaxMembers(8)
     assert not changed
 
 
-def test_assignment_change_topics():
-    asns = Assignments.fromJson(good_assignment_json)
-
-    changed = asns.changeTopicPartitions(tp2)
+def test_assignment_change_topics(assignments: Assignments):
+    changed = assignments.changeTopicPartitions(tp2)
     assert changed
 
-    changed = asns.changeTopicPartitions(tp2)
+    changed = assignments.changeTopicPartitions(tp2)
     assert not changed
+
+
+def test_assignment_get_member_assignment(assignments: Assignments):
+    assert assignments.getMemberAssignment(9) is None, 'Unknown member ID should return None'
+
+    mbrAssign = assignments.getMemberAssignment(0)
+    assert mbrAssign is not None
+    assert mbrAssign.memberId == 0
+    assert mbrAssign.topics == {'locations': [0, 1]}
+
+    mbrAssign = assignments.getMemberAssignment(5)
+    assert mbrAssign is not None
+    assert mbrAssign.memberId == 5
+    assert mbrAssign.topics == {'locations': [10, 11]}
