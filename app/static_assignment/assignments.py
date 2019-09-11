@@ -158,8 +158,8 @@ class Assignments:
             topics = parsed['topics']
             maxMembers = int(parsed['maxMembers'])
             group = parsed['group']
-            configVersion = int(parsed['configVersion'])
-            version = int(parsed['version'])
+            configVersion = int(parsed.get('configVersion', -1))
+            version = int(parsed.get('version', -1))
             primitiveMemberAssignments = parsed['memberAssignments']
 
             memberAssignments = [
@@ -182,8 +182,8 @@ class Assignments:
         group: str = 'NO_GROUP',
         maxMembers: int = 0,
         topics: Topics = {},
-        configVersion: int = 0,
-        version: int = 0,
+        configVersion: int = -1,
+        version: int = -1,
         memberAssignments: List[MemberAssignment] = [],
         doReassign: bool = True,
     ):
@@ -219,10 +219,26 @@ class Assignments:
         self.version = version
         self.configVersion = configVersion
 
+        if self.configVersion == -1:
+            self._warning('configVersion', '-1')
+        if self.version == -1:
+            self._warning('version', '-1')
+        if self.maxMembers == 0:
+            self._warning('maxMembers', '0')
+
         # member id to assignments
         self.memberAssignments = memberAssignments
         if doReassign:
             self._reassign()
+
+    def _warning(self, attr: str, val: str):
+            logger.warning('''
+                WARNING WARNING WARNING
+
+                Assignments %s found to be `%s` this is an invalid and default value.
+                Check your configuration!
+            ''', attr, val)
+
 
     def __str__(self):
         return f'{{assignments: {self.memberAssignments}}}'

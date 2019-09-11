@@ -1,0 +1,13 @@
+---
+version: '2'
+services:
+  #consumer will consume until 2 minutes transpires without data
+  kafka-consumer:
+    image: static-consumer:latest
+    depends_on:
+      - kafka-setup
+    volumes:
+      - ./config:/config
+    environment:
+      STAS_KAFKA_CONNECT: "broker:9092"
+      STAS_ZK_CONNECT: "zookeeper:2181"

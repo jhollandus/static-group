@@ -1,16 +1,21 @@
 {
-  "configVersion": 1,
+  "config.version": 4,
   "group": "example-group",
-  "hostId": "localhost-1",
-  "kafkaConnect": "localhost:9092",
-  "maxGroupSize": 2,
+  "host.id": "localhost-1",
+  "kafka.connect": "localhost:29092",
+  "max.group.size": 2,
   "more": {
-    "maxMessages": 100,
-    "maxPollingTime": 0.2
+    "max.messages": 100,
+    "max.polling.time": 0.2,
+    "consumer": {
+      "plugin.library.paths": "monitoring-interceptor",
+      "socket.timeout.ms": 5000,
+      "socket.max.fails": 1,
+      "api.version.fallback.ms": 1000
+    }
   },
   "topics": [
-    "topic_one",
-    "topic_two"
+    "location"
   ],
-  "zkConnect": "localhost:2181"
+  "zk.connect": "localhost:2181"
 }

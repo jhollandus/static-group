@@ -34,15 +34,15 @@ p() {
 
 #stats 20 30 &
 p "starting environment $(date)"
-docker-compose up -d --scale kafka-consumer=8 --scale kafka-load=0
+docker-compose -f docker-compose.yml -f docker-compose-static.yml up -d --scale kafka-consumer=8 --scale kafka-load=0
 p 'Add load'
-docker-compose up -d --scale kafka-load=1 kafka-load
+docker-compose -f docker-compose.yml -f docker-compose-static.yml up -d --scale kafka-load=1 kafka-load
 sleep 120
 p 'scaling up consumers to 16'
-docker-compose up -d --scale kafka-consumer=16 kafka-consumer
+docker-compose -f docker-compose.yml -f docker-compose-static.yml up -d --scale kafka-consumer=16 kafka-consumer
 sleep 120
 p 'scaling down consumers to 8'
-docker-compose up -d --scale kafka-consumer=8 kafka-consumer
+docker-compose -f docker-compose.yml -f docker-compose-static.yml up -d --scale kafka-consumer=8 kafka-consumer
 sleep 120
 p 'restarting consumers'
-docker-compose restart kafka-consumer
+docker-compose -f docker-compose.yml -f docker-compose-static.yml restart kafka-consumer

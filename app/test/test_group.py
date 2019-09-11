@@ -11,13 +11,13 @@ from app.static_assignment.group import StaticMembership
 @pytest.fixture()
 def staticConfigDict():
     return {
-        'hostId': 'hostId',
+        'host.id': 'hostId',
         'topics': ['t1', 't2'],
         'group': 'group',
-        'maxGroupSize': 8,
-        'configVersion': 1234,
-        'zkConnect': 'localhost:2181',
-        'kafkaConnect': 'localhost:9092',
+        'max.group.size': 8,
+        'config.version': 1234,
+        'zk.connect': 'localhost:2181',
+        'kafka.connect': 'localhost:9092',
         'more': {'foo': 'bar'},
     }
 

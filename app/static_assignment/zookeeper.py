@@ -21,14 +21,21 @@ logger = logging.getLogger(__name__)
 
 class ZkCoordinator(StaticCoordinator):
     @staticmethod
-    def fromGroup(zkConnect: str, group: str) -> Union['ZkCoordinator']:
-        prePath = '/static_assignment/' + group
-        assignmentPath = prePath + '/assignment'
-        membersPath = prePath + '/members'
+    def fromGroup(zkConnect: str, group: str) -> 'ZkCoordinator':
+        if group is None:
+            raise ValueError('ZkCoordinator: Invalid `group` argument, it must not be None')
+
+        prePath = f'/static_assignment/{group}'
+        assignmentPath = f'{prePath}/assignment'
+        membersPath = f'{prePath}/members'
         return ZkCoordinator(zkConnect, membersPath, assignmentPath)
 
-    def __init__(self, zkConnect, membersPath, assignmentsPath):
+    def __init__(self, zkConnect: str, membersPath: str, assignmentsPath: str):
         """Zookeeper implementation of `StaticCoordinator`"""
+
+        for val, name in ((zkConnect, 'zkConnect'), (membersPath, 'membersPath'), (assignmentsPath, 'assignmentsPath')):
+            if val is None:
+                raise ValueError(f'ZkCoordinator: Invalid `{name}` argument, it must not be None')
 
         logger.info('ZKCoordinator starting with, membersPath=%s, assignmentsPath=%s', membersPath, assignmentsPath)
         self._zkConnect = zkConnect

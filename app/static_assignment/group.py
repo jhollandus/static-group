@@ -94,27 +94,29 @@ class StaticConsumer:
         pass
 
 
+DEFAULT_GROUP: str = 'example-default-static-assignment-group'
 class StaticConfig:
+
     @staticmethod
     def fromDict(confDict: Dict[str, Any]) -> Optional['StaticConfig']:
         return StaticConfig(
-            hostId=confDict.get('hostId'),
-            topics=confDict.get('topics', list()),
-            group=confDict.get('group'),
-            maxGroupSize=int(confDict.get('maxGroupSize', 0)),
-            configVersion=confDict.get('configVersion'),
-            zkConnect=confDict.get('zkConnect'),
-            kafkaConnect=confDict.get('kafkaConnect'),
+            hostId=confDict.get('host.id'),
+            topics=confDict.get('topics', []),
+            group=confDict.get('group', DEFAULT_GROUP),
+            maxGroupSize=int(confDict.get('max.group.size', 0)),
+            configVersion=int(confDict.get('config.version', -1)),
+            zkConnect=confDict.get('zk.connect'),
+            kafkaConnect=confDict.get('kafka.connect'),
             more=confDict.get('more', dict()),
         )
 
     def __init__(
         self,
         hostId=None,
-        topics: List[str] = None,
-        group: str = None,
-        maxGroupSize=None,
-        configVersion=None,
+        topics: List[str] = [],
+        group: str = DEFAULT_GROUP,
+        maxGroupSize=0,
+        configVersion=-1,
         zkConnect=None,
         kafkaConnect=None,
         more: Dict[str, Any] = dict(),
@@ -393,7 +395,10 @@ class StaticMembership:
                 changed = True
 
         if changed:
-            assignments.version += 1
+            if assignments.version < 1:
+                assignments.version = 1
+            else:
+                assignments.version += 1
             self._coord.updateAssignments(self._meta(), assignments)
 
         return assignments
@@ -421,17 +426,17 @@ class StaticMembership:
         # Reassigns the consumer given the new assignments if possible.
         # if false is returned then reassignment failed and the consumer may be
         # out of sync with the rest of the group
-        self._assignments = newAssignments
 
         if self._memberId is None:
             memberAssignments = None
         else:
-            memberAssignments = self._assignments.getMemberAssignment(self._memberId)
+            memberAssignments = newAssignments.getMemberAssignment(self._memberId)
 
         if memberAssignments is not None:
             try:
                 logger.debug('Received new assignment: %s', memberAssignments)
                 self._cons.assign(memberAssignments)
+                self._assignments = newAssignments
                 self._memberAssignment = memberAssignments
             except Exception:
                 logger.exception('Failed to perform reassignment. assignments: %s', memberAssignments)
@@ -484,7 +489,7 @@ class StaticMembership:
 
     def _transitionState(self, newState: str):
         # Single point for catching transitions
-        logger.debug('State transition. prevState: %s, nextState: %s', self._state, newState)
+        logger.info('State transition. prevState: %s, nextState: %s', self._state, newState)
         if self._stateChangeCallback is not None:
             self._stateChangeCallback(self._state, newState)
         self._state = newState

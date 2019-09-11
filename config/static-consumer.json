@@ -1,0 +1,16 @@
+{
+  "config.version": 2,
+  "group": "example-group",
+  "max.group.size": 2,
+  "more": {
+    "max.messages": 100,
+    "max.polling.time": 0.2,
+    "consumer": {
+      "enable.auto.offset.store": false,
+      "plugin.library.paths": "monitoring-interceptor"
+    }
+  },
+  "topics": [
+    "location"
+  ]
+}

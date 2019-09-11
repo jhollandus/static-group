@@ -1,0 +1,22 @@
+---
+version: '2'
+services:
+  #consumer will consume until 2 minutes transpires without data
+  kafka-consumer:
+    image: confluentinc/cp-kafka:5.3.0
+    depends_on:
+      - kafka-setup
+    volumes:
+      - ./config:/config
+      - interceptors:/interceptors/
+    environment:
+      CLASSPATH: '/interceptors/monitoring-interceptors-5.3.0.jar'
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+                       cub kafka-ready -b broker:9092 1 20 && \
+                       /config/wait-for-topic.sh zookeeper:2181 location && \
+                       /config/perf-consumer.sh --topic location \
+                                                --group locations-consumer \
+                                                --broker-list broker:9092 \
+                                                --show-detailed-stats \
+                                                --messages 2147483647 \
+                                                --timeout 120000'"

@@ -2,7 +2,7 @@
 from setuptools import find_packages
 from setuptools import setup
 
-requirements = ['confluent-kafka>=1.0.1', 'kazoo>=2.6.1']
+requirements = ['confluent-kafka>=1.0.1', 'kazoo>=2.6.1', 'ujson>=1.35']
 
 with open('./test-requirements.txt') as test_reqs:
     test_requirements = [line for line in test_reqs]
