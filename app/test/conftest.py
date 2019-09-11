@@ -1,8 +1,9 @@
 import pytest
-from static_assignment.assignments import Assignments
-from static_assignment.assignments import AssignmentVersion
-from static_assignment.assignments import MemberAssignment
-from static_assignment.group import StaticMemberMeta
+
+from app.static_assignment.assignments import Assignments
+from app.static_assignment.assignments import AssignmentVersion
+from app.static_assignment.assignments import MemberAssignment
+from app.static_assignment.group import StaticMemberMeta
 
 good_assignment_json = '''
     {

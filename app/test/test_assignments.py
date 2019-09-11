@@ -1,7 +1,8 @@
 import pytest
-from static_assignment.assignments import AssignmentCalculator
-from static_assignment.assignments import Assignments
-from static_assignment.assignments import MemberAssignment
+
+from app.static_assignment.assignments import AssignmentCalculator
+from app.static_assignment.assignments import Assignments
+from app.static_assignment.assignments import MemberAssignment
 
 tp1 = {'locations': 12}
 tp2 = {'locations': 12, 'users': 4}

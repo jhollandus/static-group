@@ -1,10 +1,11 @@
 import pytest
-from static_assignment.assignments import AssignmentVersion
-from static_assignment.group import StaticConfig
-from static_assignment.group import StaticConsumer
-from static_assignment.group import StaticCoordinator
-from static_assignment.group import StaticMemberMeta
-from static_assignment.group import StaticMembership
+
+from app.static_assignment.assignments import AssignmentVersion
+from app.static_assignment.group import StaticConfig
+from app.static_assignment.group import StaticConsumer
+from app.static_assignment.group import StaticCoordinator
+from app.static_assignment.group import StaticMemberMeta
+from app.static_assignment.group import StaticMembership
 
 
 @pytest.fixture()

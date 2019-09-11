@@ -15,5 +15,5 @@ setup(
     include_package_data=True,
     install_requires=requirements,
     tests_require=test_requirements,
-    entry_points={'console_scripts': ['static-consumer = static_assignment.consumer:main']},
+    entry_points={'console_scripts': ['static-consumer = app.static_assignment.consumer:main']},
 )
