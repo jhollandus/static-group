@@ -173,7 +173,11 @@ class StaticMemberMeta:
             configVersion = None
             version = None
 
-        return {'hostId': self.hostId, 'assignment': {'configVersion': configVersion, 'version': version}}
+        return {
+            'hostId': self.hostId,
+            'memberId': self.memberId,
+            'assignment': {'configVersion': configVersion, 'version': version},
+        }
 
 
 class StaticCoordinator:
@@ -284,7 +288,13 @@ class StaticCoordinator:
 
 
 class StaticMembership:
-    def __init__(self, config: StaticConfig, staticConsumer: StaticConsumer, coordinator: StaticCoordinator):
+    def __init__(
+        self,
+        config: StaticConfig,
+        staticConsumer: StaticConsumer,
+        coordinator: StaticCoordinator,
+        stateChangeCallback=None,
+    ):
         """A membership to the static group.
 
         Represents membership to a statically assigned kafka consumer group.
@@ -305,6 +315,15 @@ class StaticMembership:
             * Add a callback hook for state change events.
             * Add a heartbeat limiter to prevent hammering the coordinator.
         """
+        if config is None:
+            raise ValueError('config is required.')
+
+        if staticConsumer is None:
+            raise ValueError('staticConsumer is required.')
+
+        if coordinator is None:
+            raise ValueError('coordinator is required.')
+
         self.STATE_STOPPED = 'stopped'
         self.STATE_STOPPING = 'stopping'
         self.STATE_NEW = 'new'
@@ -322,6 +341,7 @@ class StaticMembership:
         self._conf = config
         self._cons = staticConsumer
         self._coord = coordinator
+        self._stateChangeCallback = stateChangeCallback
 
     def _meta(self):
         # Generates member meta data from current state
@@ -465,7 +485,37 @@ class StaticMembership:
     def _transitionState(self, newState: str):
         # Single point for catching transitions
         logger.debug('State transition. prevState: %s, nextState: %s', self._state, newState)
+        if self._stateChangeCallback is not None:
+            self._stateChangeCallback(self._state, newState)
         self._state = newState
+
+    def _doStartup(self):
+        self._cons.open()
+        self._coord.start()
+        self._updateAssignments()
+        self._transitionState(self.STATE_NEW)
+
+    def step(self, fromStart=False) -> Optional[str]:
+        """Perform a single cycle in the membership lifecycle.
+
+        Performs a single cycle in the membership lifecycle and then returns the current state.
+        This is useful in testing and is primarily geared for that purpose.
+
+        If the cycle causes an error to be thrown that will also propagate up from this
+        method.
+
+        Args:
+            fromStart (bool): True to initialize the life cycle from the start, False to continue from last the point.
+
+        Returns:
+            str: The current stage it's in
+        """
+        if fromStart:
+            self._doStartup()
+
+        self._cycle()
+
+        return self._state
 
     def start(self):
         """Start this membership and immediately begin consuming if possible.
@@ -497,67 +547,72 @@ class StaticMembership:
         When a recoverable error occurs the membership reverts back to new and attempts
         to recover through the normal lifecycle.
         """
-
-        self._cons.open()
-        self._coord.start()
-        self._updateAssignments()
-        self._transitionState(self.STATE_NEW)
-
+        self._doStartup()
         while self._state != self.STATE_STOPPED:
+            self._cycle()
 
-            # send heartbeat
-            # logger.debug("Sending heartbeat")
-            memberId = self._coord.heartbeat(self._meta())
+    def _cycle(self):
+        try:
+            self._innerCycle()
+        except Exception:
+            logger.exception('Inner cycle abruptly ended with an exception. Shutting down.')
+            self._transitionState(self.STATE_STOPPING)
 
-            if self._state == self.STATE_LEFT:
-                # this might fail but we're ready to exit the process anyways
-                self._doStop()
-                self._transitionState(self.STATE_STOPPED)
+    def _innerCycle(self):
 
-            elif self._state == self.STATE_STOPPING:
-                if self._doLeave():
-                    self._transitionState(self.STATE_LEFT)
+        # send heartbeat
+        # logger.debug("Sending heartbeat")
+        memberId = self._coord.heartbeat(self._meta())
+
+        if self._state == self.STATE_LEFT:
+            # this might fail but we're ready to exit the process anyways
+            self._doStop()
+            self._transitionState(self.STATE_STOPPED)
+
+        elif self._state == self.STATE_STOPPING:
+            if self._doLeave():
+                self._transitionState(self.STATE_LEFT)
+
+        else:
+            # new, joined, assigned, consuming states only
+            if self._state == self.STATE_NEW:
+                logger.debug('Attempting to join')
+                memberId = self._coord.join(self._meta())
+
+                if memberId is not None:
+                    self._memberId = memberId
+                    self._transitionState(self.STATE_JOINED)
+                    self._cons.onJoin()
+                else:
+                    # let it cool down for a bit
+                    time.sleep(1)
 
             else:
-                # new, joined, assigned, consuming states only
-                if self._state == self.STATE_NEW:
-                    logger.debug('Attempting to join')
-                    memberId = self._coord.join(self._meta())
-
-                    if memberId is not None:
-                        self._memberId = memberId
-                        self._transitionState(self.STATE_JOINED)
-                        self._cons.onJoin()
-                    else:
-                        # let it cool down for a bit
-                        time.sleep(1)
-
+                # joined, assigned, consuming states only
+                # handle id loss or change
+                if not self._isMemberIdValid(memberId):
+                    logger.warning(
+                        f'Member ID is invalid! It has unexpectedly changed from {self._memberId} to {memberId}.'
+                    )
+                    self._transitionState(self.STATE_NEW)
                 else:
-                    # joined, assigned, consuming states only
-                    # handle id loss or change
-                    if not self._isMemberIdValid(memberId):
-                        logger.warning(
-                            f'Member ID is invalid! It has unexpectedly changed from {self._memberId} to {memberId}.'
-                        )
-                        self._transitionState(self.STATE_NEW)
-                    else:
 
-                        # check for updated assignments or get our initial assignment if just JOINED
-                        newAssignments = self._coord.assignments(self._meta())
+                    # check for updated assignments or get our initial assignment if just JOINED
+                    newAssignments = self._coord.assignments(self._meta())
 
-                        if self._isAssignmentChange(newAssignments):
-                            success = self._doReassignment(newAssignments)
+                    if self._isAssignmentChange(newAssignments):
+                        success = self._doReassignment(newAssignments)
 
-                            if success:
-                                self._transitionState(self.STATE_ASSIGNED)
-                            else:
-                                self._transitionState(self.STATE_NEW)
+                        if success:
+                            self._transitionState(self.STATE_ASSIGNED)
+                        else:
+                            self._transitionState(self.STATE_NEW)
 
-                        elif self._state == self.STATE_ASSIGNED:
-                            self._transitionState(self.STATE_CONSUMING)
+                    elif self._state == self.STATE_ASSIGNED:
+                        self._transitionState(self.STATE_CONSUMING)
 
-                        if self._state == self.STATE_CONSUMING:
-                            self._cons.poll()
+                    if self._state == self.STATE_CONSUMING:
+                        self._cons.poll()
 
     def stop(self):
         """Stop this membership and associated `StaticConsumer` and `StaticCoordinator` gracefully.

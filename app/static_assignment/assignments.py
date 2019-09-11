@@ -376,10 +376,7 @@ class AssignmentCalculator:
                         del topics[t]
 
     def _totalPartitions(self):
-        acc = 0
-        for t, p in self.topics.items():
-            acc += p
-        return acc
+        return sum([p for t, p in self.topics.items()])
 
     def generateAssignments(self, prevAssignments: Assignments = None) -> List[MemberAssignment]:
         """Generates all assignments.
