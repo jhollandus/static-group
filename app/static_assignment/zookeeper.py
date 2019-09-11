@@ -10,10 +10,11 @@ from kazoo.exceptions import ConnectionLoss
 from kazoo.exceptions import NodeExistsError
 from kazoo.exceptions import SessionExpiredError
 from kazoo.recipe.watchers import DataWatch
-from static_assignment.assignments import Assignments
-from static_assignment.assignments import MemberId
-from static_assignment.group import StaticCoordinator
-from static_assignment.group import StaticMemberMeta
+
+from app.static_assignment.assignments import Assignments
+from app.static_assignment.assignments import MemberId
+from app.static_assignment.group import StaticCoordinator
+from app.static_assignment.group import StaticMemberMeta
 
 logger = logging.getLogger(__name__)
 

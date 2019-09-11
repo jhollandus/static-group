@@ -7,11 +7,11 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
-from static_assignment.assignments import Assignments
-from static_assignment.assignments import AssignmentVersion
-from static_assignment.assignments import MemberAssignment
-from static_assignment.assignments import MemberId
-from static_assignment.assignments import Topics
+from app.static_assignment.assignments import Assignments
+from app.static_assignment.assignments import AssignmentVersion
+from app.static_assignment.assignments import MemberAssignment
+from app.static_assignment.assignments import MemberId
+from app.static_assignment.assignments import Topics
 
 logger = logging.getLogger(__name__)
 
