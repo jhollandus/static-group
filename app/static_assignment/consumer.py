@@ -6,11 +6,12 @@ from typing import Optional
 import ujson
 from confluent_kafka import Consumer
 from confluent_kafka import TopicPartition
-from static_assignment.group import MemberAssignment
-from static_assignment.group import StaticConfig
-from static_assignment.group import StaticConsumer
-from static_assignment.group import StaticMembership
-from static_assignment.zookeeper import ZkCoordinator
+
+from app.static_assignment.assignments import MemberAssignment
+from app.static_assignment.group import StaticConfig
+from app.static_assignment.group import StaticConsumer
+from app.static_assignment.group import StaticMembership
+from app.static_assignment.zookeeper import ZkCoordinator
 
 logger = logging.getLogger(__name__)
 
