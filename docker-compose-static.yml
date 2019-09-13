@@ -1,7 +1,6 @@
 ---
 version: '2'
 services:
-  #consumer will consume until 2 minutes transpires without data
   kafka-consumer:
     image: static-consumer:latest
     depends_on:
@@ -10,6 +9,7 @@ services:
       - ./config:/config
     environment:
        - STAS_CONFIG_VERSION
+       - STAS_GROUP
        - STAS_MAX_GROUP_SIZE
        - STAS_MORE__MAX_MESSAGES
        - STAS_MORE__MAX_POLL_TIME

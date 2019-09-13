@@ -572,13 +572,16 @@ class StaticMembership:
 
             # Check for topic updates on a periodic basis
             if time.time() - topicLastCheckTime > 30.0:
-                self._updateAssignments()
+                self._cycle(True)
                 topicLastCheckTime = time.time()
+            else:
+                self._cycle()
 
-            self._cycle()
-
-    def _cycle(self):
+    def _cycle(self, doTopicCheck=False):
         try:
+            if doTopicCheck:
+                self._updateAssignments()
+
             self._innerCycle()
         except Exception:
             logger.exception('Inner cycle abruptly ended with an exception. Shutting down.')

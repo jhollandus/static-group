@@ -13,7 +13,7 @@ help: ## This help.
 # execute tests with coverage
 test: ## Executes unit tests with coverage
 	mkdir -p build
-	pipenv run pytest app --cov-report xml:build/cov.xml --cov app.static_assignment
+	pipenv run pytest app --cov-report xml:build/cov.xml --cov app.static_assignment --cov-config=.coveragerc
 
 # Install the app
 install: ## Installs the module locally in editable mode

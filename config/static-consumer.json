@@ -1,5 +1,5 @@
 {
-  "config.version": 8,
+  "config.version": 1,
   "group": "static-test-group",
   "max.group.size": 8,
   "more": {

@@ -1,5 +1,6 @@
 import pytest
 
+from app.static_assignment.assignments import Assignments
 from app.static_assignment.assignments import AssignmentVersion
 from app.static_assignment.group import StaticConfig
 from app.static_assignment.group import StaticConsumer
@@ -23,6 +24,11 @@ def staticConfigDict():
 
 
 @pytest.fixture()
+def mid():
+    return 0
+
+
+@pytest.fixture()
 def staticConfig(staticConfigDict):
     return StaticConfig.fromDict(staticConfigDict)
 
@@ -34,6 +40,20 @@ def mockedMembership(mocker, staticConfig):
     sm = StaticMembership(staticConfig, mockCons, mockCoord)
 
     return (mockCons, mockCoord, sm)
+
+
+@pytest.fixture()
+def validMockedMembership(assignments, mockedMembership):
+    def partitionCount(t):
+        return assignments.topics[t]
+
+    cons, coord, sm = mockedMembership
+    sm._conf.configVersion = assignments.configVersion
+    sm._conf.topics = assignments.topics.keys()
+    cons.topicPartitionCount.side_effect = partitionCount
+    coord.assignments.return_value = assignments
+
+    return (assignments, cons, coord, sm)
 
 
 def test_static_consumer_raises_not_implemented():
@@ -177,30 +197,182 @@ def test_static_membership_coord_start_fails(mockedMembership):
     assert sm.state() is None
 
 
-def test_static_membership_updates_assignments(assignments, mockedMembership):
-    cons, coord, sm = mockedMembership
-    sm._conf.topics = assignments.topics.keys()
-    sm._conf.configVersion = assignments.configVersion
+@pytest.mark.parametrize(
+    'desc, cfgVersion, asnCfgVersion, cfgTopics, asnTopics, callCount',
+    [
+        ('config and assignment are the same', 1, 1, {'t1': 10}, {'t1': 10}, 0),
+        ('config version has been updated', 2, 1, {'t1': 10}, {'t1': 10}, 1),
+        ('new topic has been added', 1, 1, {'t1': 10, 't2': 6}, {'t1': 10}, 1),
+        ('topic is invalid config updated', 2, 1, {'t1': 0}, {'t1': 10}, 1),
+        ('topic is invalid', 1, 1, {'t1': 0}, {'t1': 10}, 0),
+        ('partitions have changed', 1, 1, {'t1': 12}, {'t1': 10}, 1),
+        ('no assignments are avaliable', 1, None, {'t1': 10}, None, 1),
+    ],
+)
+def test_static_membership_updates_assignments_initially(
+    desc, cfgVersion, asnCfgVersion, cfgTopics, asnTopics, callCount, assignments, mockedMembership
+):
 
-    cons.topicPartitionCount.return_value = list(assignments.topics.values())[0]
-    coord.assignments.return_value = assignments
+    cons, coord, sm = mockedMembership
+    if asnTopics is None:
+        coord.assignments.return_value = None
+    else:
+        coord.assignments.return_value = assignments
+        assignments.topics = asnTopics
+
+    sm._conf.configVersion = cfgVersion
+    assignments.configVersion = asnCfgVersion
+    sm._conf.topics = cfgTopics.keys()
+    cons.topicPartitionCount.side_effect = list(cfgTopics.values())
+    # prevent going to join state
     coord.join.return_value = None
 
     state = sm.step(True)
     assert state == sm.STATE_NEW
-    coord.updateAssignments.assert_not_called()
+    assert coord.updateAssignments.call_count == callCount
 
-    # now change the config version
-    sm._conf.configVersion = assignments.configVersion + 1
-    state = sm.step(True)
-    assert state == sm.STATE_NEW
-    coord.updateAssignments.assert_called_once()
 
-    # revert the config version
+def test_static_membership_updates_assignments_initially_err(assignments, mockedMembership):
+    cons, coord, sm = mockedMembership
+
     sm._conf.configVersion = assignments.configVersion
+    sm._conf.topics = assignments.topics.keys()
+    cons.topicPartitionCount.side_effect = list(assignments.topics.values())
+    # prevent going to join state
+    coord.join.return_value = None
 
-    # now return None for the assignments
-    coord.assignments.return_value = None
+    # when fetching assignments from zookeeper
+    coord.assignments.side_effect = ValueError('boom1')
+    with pytest.raises(ValueError) as e:
+        sm.step(True)
+    assert str(e.value) == 'boom1'
+    coord.assignments.side_effect = None
+    coord.assignments.return_value = assignments
+
+    # when fetching topic metadata from the consumer
+    cons.topicPartitionCount.side_effect = ValueError('boom2')
+    with pytest.raises(ValueError) as e:
+        sm.step(True)
+    assert str(e.value) == 'boom2'
+    cons.topicPartitionCount.side_effect = list(assignments.topics.values())
+
+    # when updating assignments to zookeeper
+    sm._conf.configVersion = assignments.configVersion + 1
+    coord.updateAssignments.side_effect = ValueError('boom3')
+    with pytest.raises(ValueError) as e:
+        sm.step(True)
+    assert str(e.value) == 'boom3'
+
+
+def test_static_membership_join_with_memberid(mid, validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    coord.join.return_value = mid
+    state = sm.step(True)
+    assert state == sm.STATE_JOINED
+
+
+def test_static_membership_no_join_without_memberid(validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    coord.join.return_value = None
     state = sm.step(True)
     assert state == sm.STATE_NEW
-    assert coord.updateAssignments.call_count == 2
+
+
+def test_static_membership_join_err(validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    coord.join.side_effect = ValueError('boom')
+    state = sm.step(True)
+    assert state == sm.STATE_STOPPING
+
+
+def test_static_membership_join_then_memberid_none(mid, validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    test_static_membership_join_with_memberid(mid, validMockedMembership)
+    coord.heartbeat.return_value = None
+    state = sm.step()
+    assert state == sm.STATE_NEW
+
+
+def test_static_membership_join_then_memberid_different(validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    test_static_membership_join_with_memberid(0, validMockedMembership)
+    coord.heartbeat.return_value = 1
+    state = sm.step()
+    assert state == sm.STATE_NEW
+
+
+def test_static_membership_assigned(mid, validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    test_static_membership_join_with_memberid(mid, validMockedMembership)
+    coord.heartbeat.return_value = mid
+    state = sm.step()
+    assert state == sm.STATE_ASSIGNED
+    assert sm._memberAssignment is not None
+    assert sm._memberAssignment == asn.getMemberAssignment(sm._memberId)
+
+
+def test_static_membership_assigned_assignment_changed(assignments, validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    assert assignments.changeMaxMembers(4)
+
+    test_static_membership_assigned(0, validMockedMembership)
+    coord.assignments.return_value = assignments
+    state = sm.step()
+    assert state == sm.STATE_CONSUMING
+    assert sm._memberAssignment is not None
+    assert sm._memberAssignment == assignments.getMemberAssignment(0)
+    assert cons.assign.call_count == 1
+
+
+def test_static_membership_assigned_memberid_suddenly_invalid(validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+    newAsn = Assignments(asn.group, 4, asn.topics, asn.configVersion, asn.version + 1)
+
+    test_static_membership_assigned(5, validMockedMembership)
+
+    coord.assignments.return_value = newAsn
+    state = sm.step()
+    assert state == sm.STATE_NEW
+
+
+def test_static_membership_consuming_topics_change(validMockedMembership):
+    pass
+
+
+def test_static_membership_consuming_consumer_err(validMockedMembership):
+    pass
+
+
+def test_static_membership_consuming_hearbeat_err(validMockedMembership):
+    pass
+
+
+@pytest.mark.parametrize('hbReturn', [None, 5, 100])
+def test_static_membership_assigned_then_lost(hbReturn, validMockedMembership):
+    asn, cons, coord, sm = validMockedMembership
+
+    test_static_membership_join_with_memberid(0, validMockedMembership)
+    coord.heartbeat.return_value = None
+    state = sm.step()
+    assert state == sm.STATE_NEW
+
+
+def test_static_membership_shutdown_not_started(mockedMembership):
+    cons, coord, sm = mockedMembership
+
+    try:
+        sm.stop()
+    except Exception:
+        pytest.fail('Exception not expected')
+
+    assert cons.close.call_count == 1
+    assert coord.stop.call_count == 1
+    assert coord.leave.call_count == 1
+    assert sm.state() is None

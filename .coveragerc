@@ -1,0 +1,4 @@
+[run]
+omit =
+  */consumer.py
+  */zookeeper.py
