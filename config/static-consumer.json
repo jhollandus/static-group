@@ -1,14 +1,14 @@
 {
-  "config.version": 2,
-  "group": "example-group",
-  "max.group.size": 2,
+  "config.version": 8,
+  "group": "static-test-group",
+  "max.group.size": 8,
   "more": {
-    "max.messages": 100,
-    "max.polling.time": 0.2,
     "consumer": {
       "enable.auto.offset.store": false,
       "plugin.library.paths": "monitoring-interceptor"
-    }
+    },
+    "max.messages": 10000,
+    "max.polling.time": 5
   },
   "topics": [
     "location"

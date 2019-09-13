@@ -1,7 +1,6 @@
 import logging
 import time
 from typing import Optional
-from typing import Union
 
 import ujson
 from kazoo.client import KazooClient
@@ -22,20 +21,38 @@ logger = logging.getLogger(__name__)
 class ZkCoordinator(StaticCoordinator):
     @staticmethod
     def fromGroup(zkConnect: str, group: str) -> 'ZkCoordinator':
-        if group is None:
-            raise ValueError('ZkCoordinator: Invalid `group` argument, it must not be None')
+        """Convenience method for instantiation using conventional paths based on group.
 
-        prePath = f'/static_assignment/{group}'
+        The path convention is:
+
+            /static_assignment/[group]/assignments
+            /static_assignment/[group]/members
+
+        Args:
+            zkConnect (str): Comma-separated list of hosts to connect to (e.g. 127.0.0.1:2181,127.0.0.1:2182,[::1]:2183).
+            group (str): The name of the consumer group this coordinator belongs to. Must not be None.
+        """
+
+        if group is None or len(group.strip()) == 0:
+            raise ValueError('ZkCoordinator: Invalid `group` argument, it must not be None or blank.')
+
+        prePath = f'/static_assignment/{group.strip()}'
         assignmentPath = f'{prePath}/assignment'
         membersPath = f'{prePath}/members'
         return ZkCoordinator(zkConnect, membersPath, assignmentPath)
 
     def __init__(self, zkConnect: str, membersPath: str, assignmentsPath: str):
-        """Zookeeper implementation of `StaticCoordinator`"""
+        """Zookeeper implementation of `StaticCoordinator`
+
+        Args:
+            zkConnect (str): Comma-separated list of hosts to connect to (e.g. 127.0.0.1:2181,127.0.0.1:2182,[::1]:2183).
+            membersPath (str): Zookeeper path at which members will create ephemeral nodes asserting their ID.
+            assignmentsPath (str): Zookeeper path at which the current assignments are kept.
+        """
 
         for val, name in ((zkConnect, 'zkConnect'), (membersPath, 'membersPath'), (assignmentsPath, 'assignmentsPath')):
-            if val is None:
-                raise ValueError(f'ZkCoordinator: Invalid `{name}` argument, it must not be None')
+            if val is None or len(val.strip()) == 0:
+                raise ValueError(f'ZkCoordinator: Invalid `{name}` argument, it must not be None or blank')
 
         logger.info('ZKCoordinator starting with, membersPath=%s, assignmentsPath=%s', membersPath, assignmentsPath)
         self._zkConnect = zkConnect
@@ -46,7 +63,8 @@ class ZkCoordinator(StaticCoordinator):
         self._assignmentsPath = assignmentsPath
         self._assignmentsPathEnsured = False
         self._currentAssignment = None
-        self._memberMetaData = None
+        self._assignmentsWatcher = None
+        self._memberMetaData: Optional[StaticMemberMeta] = None
 
         self.zk = KazooClient(hosts=zkConnect)
         self.zk.add_listener(self._zkListener())
@@ -57,36 +75,26 @@ class ZkCoordinator(StaticCoordinator):
             if state == KazooState.LOST:
                 self._memberId = None
                 self._currentAssignment = None
-            if state == KazooState.CONNECTED:
-                self._establishSession()
 
         return listener
 
     def _establishSession(self):
 
-        logger.debug('Establishing session')
+        if self._assignmentsWatcher is None:
+            # add watch for assignment updates
+            def watchAssignments(data, stat, event):
+                self._currentAssignment = self._processAssignmentsData(data)
+                logger.info('Assignment update received. | assignments= %s', self._currentAssignment)
 
-        # add watch for assignment updates
-        def watchAssignments(data, stat, event):
-            logger.debug('Assignment watch triggered. event: %s', event)
-            self._currentAssignment = self._processAssignmentsData(data)
-
-        DataWatch(self.zk, watchAssignments)
-        logger.debug('Session established')
+            self._ensureAssignmentsPath()
+            self._assignmentWatcher = DataWatch(self.zk, self._assignmentsPath, watchAssignments)
 
     def _ensureAssignmentsPath(self):
-        logger.debug('ensuring assignments path. ensured: %s', self._assignmentsPathEnsured)
         if not self._assignmentsPathEnsured:
             self.zk.ensure_path(self._assignmentsPath)
             self._assignmentsPathEnsured = True
 
-    def _fetchAssignments(self) -> Assignments:
-        if self._currentAssignment is None:
-            logger.debug('getting assignments path %s', self._assignmentsPath)
-            data, _ = self.zk.get(self._assignmentsPath)
-            self._currentAssignment = self._processAssignmentsData(data)
-            logger.debug('assignments received')
-
+    def _fetchAssignments(self) -> Optional[Assignments]:
         return self._currentAssignment
 
     def _processAssignmentsData(self, rawData):
@@ -132,17 +140,23 @@ class ZkCoordinator(StaticCoordinator):
 
             path = self._createPath()
             if path is not None:
-                logger.info('Updating member meta data. oldMeta: %s, newMeta: %s', selfDict, newDict)
-                self.zk.set(path, self._encodeMemberData(meta))
+
+                def cb(async_obj):
+                    try:
+                        async_obj.get()
+                        logger.info('Member meta data updated. | metaData=%s', meta)
+                    except (ConnectionLoss, SessionExpiredError):
+                        logger.exception('Failed to update member meta data.')
+
+                self.zk.set_async(path, self._encodeMemberData(meta)).rawlink(cb)
 
     def updateAssignments(self, meta: StaticMemberMeta, newAssignments: Assignments):
-        logger.debug('updating assignment')
         self.zk.retry(self._innerUpdateAssignment, newAssignments)
-        logger.debug('assignment update complete')
 
     def _innerUpdateAssignment(self, assignment: Assignments):
         self._ensureAssignmentsPath()
         self.zk.set(self._assignmentsPath, assignment.asJson().encode('utf-8'))
+        logger.info('Assignments updated. | assignments=%s', assignment)
 
     def leave(self, meta: StaticMemberMeta):
         self.zk.retry(self._innerLeave)
@@ -150,13 +164,22 @@ class ZkCoordinator(StaticCoordinator):
     def _innerLeave(self):
         path = self._createPath()
         if path is not None:
-            self.zk.delete(path)
+            try:
+                self.zk.delete(path)
+            except (ConnectionLoss, SessionExpiredError):
+                logger.exception(
+                    'Failed to relinquish member ID, '
+                    "will assume ephemeral node will expire on it's own. "
+                    '| memberId=%s',
+                    self._memberId,
+                )
             self._memberId = None
 
     def join(self, meta: StaticMemberMeta):
 
         asgns = self._fetchAssignments()
         if asgns is None:
+            logger.warning('Cannot join a group without assignments. | assignmentsPath=%s', self._assignmentsPath)
             return None
 
         if self._memberId is None:
@@ -174,22 +197,22 @@ class ZkCoordinator(StaticCoordinator):
         for mid in idList:
             memberIdPath = self._createPath(mid)
 
-            # TOdo: should there sleep in here?
             try:
                 self.zk.create(memberIdPath, memberData, ephemeral=True)
                 foundMid = mid
-                logging.debug('Found available member id. memberId: %s', mid)
+                logging.debug('Member id acquired. | memberId=%s', mid)
                 break
             except NodeExistsError:
                 # move onto the next node
-                logger.debug('Member id (%s) already exists moving to next.', mid)
+                logger.debug('Member id already taken moving to next. | memberId=%s', mid)
             except (ConnectionLoss, SessionExpiredError):
+                logger.exception('Member id acquisition attempt failed with error.')
                 time.sleep(1)
 
         self._memberMetaData = meta
         return foundMid
 
-    def assignments(self, meta: StaticMemberMeta) -> Assignments:
+    def assignments(self, meta: StaticMemberMeta) -> Optional[Assignments]:
         self._compareAndUpdateMemberData(meta)
         return self._fetchAssignments()
 
@@ -203,4 +226,4 @@ class ZkCoordinator(StaticCoordinator):
 
     def start(self):
         self.zk.start()
-        self._ensureAssignmentsPath()
+        self._establishSession()

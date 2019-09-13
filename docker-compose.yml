@@ -26,6 +26,7 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: broker:9092
@@ -55,21 +56,22 @@ services:
       CONFLUENT_METRICS_TOPIC_REPLICATION: 1
       PORT: 9021
 
-  #scale this up to mimic more load, a single instance puts one tenth of the relevant load on for 15 minutes
+  #scale this up to mimic more load, a single instance puts one tenth of the relevant load on for 5 minutes
   kafka-load:
     image: confluentinc/cp-kafka:5.3.0
     depends_on:
+      - control-center
       - kafka-setup
     volumes:
       - ./config:/config
       - interceptors:/interceptors/
     environment:
-      CLASSPATH: '/interceptors/monitoring-interceptors-5.3.0.jar'
+      CLASSPATH: '/interceptors/monitoring-interceptors-5.2.2.jar'
     command: "bash -c 'echo Waiting for Kafka to be ready... && \
                        cub kafka-ready -b broker:9092 1 20 && \
                        /config/wait-for-topic.sh zookeeper:2181 location && \
                        /config/perf-producer.sh --topic location \
-                                                --num-records 3375000 \
+                                                --num-records 1125000 \
                                                 --throughput 3750 \
                                                 --record-size 100'"
 

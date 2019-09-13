@@ -16,5 +16,4 @@ pre-commit = "==1.18.3"
 confluent-kafka = "==1.0.1"
 kazoo = "==2.6.1"
 ujson = "==1.35"
-gevent = "*"
 static-assignment = {editable = true,path = "."}

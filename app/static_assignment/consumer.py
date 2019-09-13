@@ -1,7 +1,8 @@
-import signal
 import argparse
 import logging
+import signal
 import threading
+import time
 from collections import Mapping
 from os import environ
 from typing import Any
@@ -126,7 +127,7 @@ class ConfigCollector:
         Returns:
             Dict[str, Any]: A dictionary containing flattened results all hierarcy will be stripped but original types as determined by the source will be preserved.
         """
-        rs = {}
+        rs: Dict[str, Any] = dict()
         for src in self._sources:
             rs.update(src())
 
@@ -134,7 +135,7 @@ class ConfigCollector:
 
     def parse(self) -> Dict[str, Any]:
         """Parses configured sources, maintaining hierarchy"""
-        rs = {}
+        rs: Dict[str, Any] = dict()
         for src in self._sources:
             for k, v in src():
                 pathParts = k.split(':')
@@ -165,7 +166,7 @@ class ConfigCollector:
                 rs.append((key, v))
         return rs
 
-    def _parseDict(self, aDict: Dict[str, Any], _path: List[str] = []) -> List[Tuple[str, Any]]:
+    def _parseDict(self, aDict: Mapping[Any, Any], _path: List[str] = []) -> List[Tuple[str, Any]]:
 
         rs = []
         for k, v in aDict.items():
@@ -183,8 +184,8 @@ class ExampleConsumer(StaticConsumer):
     def __init__(self, config: StaticConfig, echo: bool = False):
         self._config = config
         self._consumer: Optional[Consumer] = None
-        self._maxMessages = config.more.get('max.messages', 100)
-        self._maxPollTime = float(config.more.get('max.poll.time', 0.2))
+        self._maxMessages = config.more.get('max.messages', 1000)
+        self._maxPollTime = float(config.more.get('max.poll.time', 5))
         self.totalCount = 0
         self.echo = echo
 
@@ -221,7 +222,9 @@ class ExampleConsumer(StaticConsumer):
             raise ValueError('Invalid state, consumer is not open.')
 
         msgCount = 0
-        for msg in  self._consumer.consume(self._maxMessages, self._maxPollTime):
+        startTime = time.time()
+        while msgCount < self._maxMessages and time.time() - startTime < self._maxPollTime:
+            msg = self._consumer.poll(self._maxPollTime)
             if msg is None:
                 break
             elif msg.error():
@@ -232,8 +235,6 @@ class ExampleConsumer(StaticConsumer):
                     print(f'{msg.value()}')
                 self._consumer.store_offsets(msg)
                 msgCount += 1
-
-        logger.info('Consumed %s messages', msgCount)
         self.totalCount += msgCount
 
     def assign(self, assignments: MemberAssignment):
@@ -249,13 +250,11 @@ class ExampleConsumer(StaticConsumer):
         if self._consumer is None:
             raise ValueError('Invalid state, consumer is not open.')
 
-        logger.info('Consumer assigning new topic partitions: %s', assignments)
         tps = []
         for t, pList in assignments.topics.items():
             tps.extend([TopicPartition(t, p) for p in pList])
-        self._consumer.unassign()
         self._consumer.assign(tps)
-        logger.info('Consumer assignment complete: %s', assignments)
+        logger.info('New assignments received and applied. | assignments=%s', tps)
 
     def open(self):
         """When invoked the consumer should establish it's initial connection to kafka.
@@ -263,19 +262,28 @@ class ExampleConsumer(StaticConsumer):
         Invoked prior to doing anything else. The consumer should establish itself and connect to kafka. If an error is encountered then this will cause a
         fast failure and an outside process will need to perform retries.
         """
+
+        def cb(err, tpList):
+            if err is not None:
+                logger.error('Consumer error encountered. | error=%s', err)
+
+            logger.debug('Consumer callback invoked. | partitions=%s', tpList)
+
         props = {}
         if self._config.more is not None and 'consumer' in self._config.more:
             props.update(self._config.more['consumer'])
 
-        props.update({'bootstrap.servers': self._config.kafkaConnect,
-                      'group.id': self._config.group,
-                      'client.id': self._config.group + '_' + self._config.hostId,
-                    })
+        props.update(
+            {
+                'bootstrap.servers': self._config.kafkaConnect,
+                'group.id': self._config.group,
+                'client.id': self._config.group + '_' + self._config.hostId,
+            }
+        )
 
-        logger.info('Using following configuration for the consumer: %s', props)
         if self._consumer is None:
-            self._consumer = Consumer(props)
-        logging.debug('Consumer connection open')
+            self._consumer = Consumer(props, on_commit=cb)
+            logger.info('Opened consumer. | properties=%s', props)
 
     def close(self):
         """When invoked the consumer should close down and cleanup any resources it has allocated.
@@ -301,6 +309,7 @@ def parse_args():
     """Parse command line arguments"""
 
     parser = argparse.ArgumentParser(description='Example consumer app for testing static group leader')
+    parser.add_argument('-v', dest='verbose', action='store_true', help='Turn on verbose logging')
     parser.add_argument('--example', action='store_true', help='Prints an example JSON configuration to the stdout')
     parser.add_argument('--echo', action='store_true', help='Print out each message consumed to stdout.')
     parser.add_argument(
@@ -310,6 +319,7 @@ def parse_args():
     args = parser.parse_args()
 
     return args
+
 
 def main():
     args = parse_args()
@@ -331,7 +341,12 @@ def main():
 }'''
         )
     else:
-        logging.basicConfig(level=logging.DEBUG)
+
+        level = logging.INFO
+        if args.verbose:
+            level = logging.DEBUG
+        logging.basicConfig(level=level)
+
         config = ConfigCollector()
         if args.config_file is not None:
             config.addJson(args.config_file)
@@ -346,8 +361,9 @@ def main():
         stMembership = StaticMembership(conf, stConsumer, stCoordinator)
 
         def sigterm_handler(signal, frame):
-            logger.info("SIGTERM received, shutting down")
+            logger.info('SIGTERM received, shutting down')
             stMembership.stop()
+
         signal.signal(signal.SIGTERM, sigterm_handler)
 
         def membershipThread():

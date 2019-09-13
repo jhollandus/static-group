@@ -65,19 +65,19 @@ def test_static_config_from_dict(staticConfigDict):
     d = staticConfigDict
 
     stcfg = StaticConfig.fromDict(d)
-    assert stcfg.hostId == d['hostId']
+    assert stcfg.hostId == d['host.id']
     assert stcfg.topics == d['topics']
     assert stcfg.group == d['group']
-    assert stcfg.maxGroupSize == d['maxGroupSize']
-    assert stcfg.configVersion == d['configVersion']
-    assert stcfg.zkConnect == d['zkConnect']
-    assert stcfg.kafkaConnect == d['kafkaConnect']
+    assert stcfg.maxGroupSize == d['max.group.size']
+    assert stcfg.configVersion == d['config.version']
+    assert stcfg.zkConnect == d['zk.connect']
+    assert stcfg.kafkaConnect == d['kafka.connect']
     assert stcfg.more == d['more']
 
 
 def test_static_config_from_no_hostId(staticConfigDict):
     d = staticConfigDict
-    d['hostId'] = None
+    d['host.id'] = None
     stcfg = StaticConfig.fromDict(d)
     assert stcfg.hostId is not None
 

@@ -95,8 +95,9 @@ class StaticConsumer:
 
 
 DEFAULT_GROUP: str = 'example-default-static-assignment-group'
-class StaticConfig:
 
+
+class StaticConfig:
     @staticmethod
     def fromDict(confDict: Dict[str, Any]) -> Optional['StaticConfig']:
         return StaticConfig(
@@ -236,13 +237,16 @@ class StaticCoordinator:
     def assignments(self, meta: StaticMemberMeta) -> Optional[Assignments]:
         """Fetch the current assignments for the group.
 
-        Fetches the most current version of the assignments. In the case where the most current
-        version is not accessible then None should be returned.
+        Fetches the most current version of the assignments. If no assignments have been established yet
+        then None is returned.
+
+        In the case where where underlying issues are preventing access to the assignments then an error
+        should be raised.
 
         Args:
             meta (StaticMemberMeta): Meta data about the member invoking this method.
         Returns:
-            Assignments: The current assignments or None if they are not accessible for any reason
+            Assignments: The current assignments or None if they haven't been established yet.
         """
         raise NotImplementedError
 
@@ -344,14 +348,17 @@ class StaticMembership:
         self._cons = staticConsumer
         self._coord = coordinator
         self._stateChangeCallback = stateChangeCallback
+        self._memberMeta = StaticMemberMeta(self._conf.hostId, None, None)
 
-    def _meta(self):
+    def _meta(self, update=False):
         # Generates member meta data from current state
-        aVersion = None
-        if self._assignments is not None:
-            aVersion = self._assignments.assignmentVersion()
+        if update:
+            aVersion = None
+            if self._assignments is not None:
+                aVersion = self._assignments.assignmentVersion()
+            self._memberMeta = StaticMemberMeta(self._conf.hostId, self._memberId, aVersion)
 
-        return StaticMemberMeta(self._conf.hostId, self._memberId, aVersion)
+        return self._memberMeta
 
     def _fetchAllTopicMetadata(self, topicList: List[str]) -> Topics:
         # Fetch all topic partition counts from the `StaticConsumer` at once.
@@ -368,7 +375,11 @@ class StaticMembership:
         # potentially generate new member assignments based on our `StaticConfig`
         topics = self._fetchAllTopicMetadata(self._conf.topics)
 
-        assignments = self._coord.assignments(self._meta())
+        if self._assignments is None:
+            assignments = self._coord.assignments(self._meta())
+        else:
+            assignments = self._assignments
+
         # this may be the first run ever for this group so no assignments are available
         if assignments is None:
             assignments = Assignments(
@@ -434,10 +445,11 @@ class StaticMembership:
 
         if memberAssignments is not None:
             try:
-                logger.debug('Received new assignment: %s', memberAssignments)
+                logger.debug('Received new assignment. | memberAssignments=%s', memberAssignments)
                 self._cons.assign(memberAssignments)
                 self._assignments = newAssignments
                 self._memberAssignment = memberAssignments
+                self._meta(True)
             except Exception:
                 logger.exception('Failed to perform reassignment. assignments: %s', memberAssignments)
                 return False
@@ -458,6 +470,7 @@ class StaticMembership:
             self._memberId = None
             self._memberAssignment = None
             self._assignments = None
+            self._meta(True)
         except Exception:
             logger.exception('Failed to leave the group.')
             return False
@@ -472,24 +485,24 @@ class StaticMembership:
     def _doStop(self) -> bool:
         # Stop all activities for this consumer and cleanup resources.
         # Will return False if any stop activities fail but regardless all activities will be done.
-        fail = False
+        success = True
         try:
             self._cons.close()
-        except Exception:
-            logger.exception('Failed to close consumer.')
-            fail = True
+        except Exception as ex:
+            logger.warning('Failed to close consumer. %s: %s', ex.__class__.__name__, ex)
+            success = False
 
         try:
             self._coord.stop()
-        except Exception:
-            logger.exception('Failed to close coordinator.')
-            fail = True
+        except Exception as ex:
+            logger.warning('Failed to stop coordinator. %s: %s', ex.__class__.__name__, ex)
+            success = False
 
-        return not fail
+        return success
 
     def _transitionState(self, newState: str):
         # Single point for catching transitions
-        logger.info('State transition. prevState: %s, nextState: %s', self._state, newState)
+        logger.debug('State transition occurred. | prevState=%s, nextState=%s', self._state, newState)
         if self._stateChangeCallback is not None:
             self._stateChangeCallback(self._state, newState)
         self._state = newState
@@ -553,7 +566,15 @@ class StaticMembership:
         to recover through the normal lifecycle.
         """
         self._doStartup()
+
+        topicLastCheckTime = time.time()
         while self._state != self.STATE_STOPPED:
+
+            # Check for topic updates on a periodic basis
+            if time.time() - topicLastCheckTime > 30.0:
+                self._updateAssignments()
+                topicLastCheckTime = time.time()
+
             self._cycle()
 
     def _cycle(self):
@@ -627,7 +648,8 @@ class StaticMembership:
 
             Stopping a membership that has not been started or has already been stopped will not induce an error.
         """
-        if self._state is not None and self._state != self.STATE_STOPPED:
+        if self._state is not None and self._state not in [self.STATE_STOPPED, self.STATE_STOPPING, self.STATE_LEFT]:
+
             logger.info(
                 'Stopping consumer membership. memberId: %s, assignment: %s', self._memberId, self._memberAssignment
             )

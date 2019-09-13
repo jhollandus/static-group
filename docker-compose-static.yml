@@ -9,5 +9,9 @@ services:
     volumes:
       - ./config:/config
     environment:
-      STAS_KAFKA_CONNECT: "broker:9092"
-      STAS_ZK_CONNECT: "zookeeper:2181"
+       - STAS_CONFIG_VERSION
+       - STAS_MAX_GROUP_SIZE
+       - STAS_MORE__MAX_MESSAGES
+       - STAS_MORE__MAX_POLL_TIME
+       - STAS_KAFKA_CONNECT=broker:9092
+       - STAS_ZK_CONNECT=zookeeper:2181
